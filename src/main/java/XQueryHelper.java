@@ -17,39 +17,65 @@ import java.util.logging.Logger;
 public class XQueryHelper {
     private static final Logger  log = Logger.getLogger(XQueryHelper.class.getName());
 
+
+
     private XQPreparedExpression expr;
     private XQConnection         conn;
 
     private JAXBContext          jaxbContext;
     private Unmarshaller         jaxbUnmarshaller;
 
-    static final String apiURL   = "http://musicbrainz.org/ws/2/artist/cc2c9c3c-b7bc-4b8b-84d8-4fbd8779e493?inc=releases";
-    static final String albumsXQ =
-            "declare namespace mmd=\"http://musicbrainz.org/ns/mmd-2.0#\";\n"
-                    + "declare variable $doc external;\n"
-                    + "for $r in $doc//mmd:release\n"
-                    + "let $years-from-date:=$r/mmd:date[matches(text(),\"^\\d{4}-\\d{2}-\\d{2}$\")]/year-from-date(text())\n"
-                    + "let $years:=$r/mmd:date[matches(text(),\"^\\d{4}$\")]\n"
+    //http://www.resultados-futbol.com/scripts/api/api.php?tz=Europe/Madrid&format=xml&req=teams&key=0bbe700a8b3bcf94832e2cd9556b8c5e&league=1
+
+    static final String apiURL = "http://www.resultados-futbol.com/scripts/api/api.php?tz=Europe/Madrid&format=xml&req=get_teams&key=0bbe700a8b3bcf94832e2cd9556b8c5e&filter=espana";
+    static final String apiTeamBase = "http://www.resultados-futbol.com/scripts/api/api.php?tz=Europe/Madrid&format=xml&req=team_players&key=0bbe700a8b3bcf94832e2cd9556b8c5e&team=";
+
+
+    static final String teamsXQ =
+            //declare variable $doc := doc(\"http://www.resultados-futbol.com/scripts/api/api.php?tz=Europe/Madrid&format=xml&req=get_teams&key=0bbe700a8b3bcf94832e2cd9556b8c5e&filter=espana\");\n"
+                    "declare variable $doc external;\n"
+                    + "for $t in $doc/get_teams/teams\n"
+                    + "where fn:contains($t/competition_name/text(), \"Liga BBVA\")"
                     + "return\n"
-                    + "<song>\n"
-                    + "  <title>{$r/mmd:title/text()}</title>\n"
-                    + "  <artist>{$doc//mmd:artist/mmd:name/text()}</artist>\n"
-                    + "  <countries>{distinct-values($r//mmd:country)}</countries>\n"
-                    + "  <year>{min(($years,$years-from-date))}</year>\n"
-                    + "</song>";
+                    + "<team>\n"
+                    +   "<id>{$t/id/text()}</id>"
+                    +   "<nameShow>{$t/nameShow/text()}</nameShow>"
+                    +   "<competition_name>{$t/competition_name/text()}</competition_name>"
+                    +   "</team>";
+
+    static final String playerXQ =
+            "declare variable $doc external;\n"
+            +"for $t in $doc/team_players/player\n" +
+                    "return <player>\n" +
+                    "        <nick>{$t/nick/text()}</nick>\n" +
+                    "        <role>{$t/role/text()}</role>\n" +
+                    "        </player>";
+
 
     @XmlRootElement
-    private static class Song {
-        @XmlElement String title;
-        @XmlElement String artist;
-        @XmlElement String countries;
-        @XmlElement Integer year;
+    private static class Team{
+        @XmlElement String id;
+        @XmlElement String nameShow;
+        @XmlElement String competition_name;
+
 
         @Override
-        public String toString() {
-            return "Title: "+title+"\n"+"Artist: "+artist+"\n"+"Countries: "+countries+"\n"+"Year: "+year+"\n";
+        public String toString(){
+            return "id: "+id+"name: "+nameShow+"liga: "+competition_name;
         }
     }
+
+    @XmlRootElement
+    private static class Player{
+        @XmlElement String nick;
+        @XmlElement String role;
+
+        @Override
+        public String toString(){
+            return "nick: "+nick+"\n" + "role: " + role;
+        }
+    }
+
 
     XQueryHelper(String xquery, URL url)
             throws ClassNotFoundException, InstantiationException, IllegalAccessException, XQException, IOException, JAXBException {
@@ -57,30 +83,58 @@ public class XQueryHelper {
         urlconn.setReadTimeout(50000);
 
         XQDataSource xqds = (XQDataSource) Class.forName("net.sf.saxon.xqj.SaxonXQDataSource").newInstance();
+  ;
         this.conn = xqds.getConnection();
         this.expr = conn.prepareExpression(xquery);
         this.expr.bindDocument(new javax.xml.namespace.QName("doc"), urlconn.getInputStream(), null, null);
+        //this.jaxbContext = JAXBContext.newInstance(Player.class);
+        //this.jaxbUnmarshaller = jaxbContext.createUnmarshaller();
 
-        this.jaxbContext = JAXBContext.newInstance(Song.class);
-        this.jaxbUnmarshaller = jaxbContext.createUnmarshaller();
     }
 
-    ArrayList<Song> getSongs() {
-        ArrayList<Song> songs = new ArrayList<Song>();
+    ArrayList<Team> getTeams() throws JAXBException {
+        this.jaxbContext = JAXBContext.newInstance(Team.class);
+        this.jaxbUnmarshaller = jaxbContext.createUnmarshaller();
+        ArrayList<Team> teams = new ArrayList<Team>();
         try {
             XQResultSequence rs = this.expr.executeQuery();
-            while (rs.next()) {
+            while(rs.next()){
                 XQItem item = rs.getItem();
-                Song song = (Song) jaxbUnmarshaller.unmarshal(item.getNode());
-                songs.add(song);
+                Team team = (Team) jaxbUnmarshaller.unmarshal(item.getNode());
+                teams.add(team);
+
             }
+
+        }catch (Exception e){
+            log.log(Level.SEVERE,e.getMessage());
         }
-        catch (Exception e) {
-            log.log(Level.SEVERE, e.getMessage());
-        }
-        finally { close(); }
-        return songs;
+        finally {close();}
+        return teams;
     }
+
+
+    ArrayList<Player> getPlayers() throws JAXBException {
+        this.jaxbContext = JAXBContext.newInstance(Player.class);
+        this.jaxbUnmarshaller = jaxbContext.createUnmarshaller();
+        ArrayList<Player> players = new ArrayList<Player>();
+        try {
+            XQResultSequence rs = this.expr.executeQuery();
+            while(rs.next()){
+                XQItem item = rs.getItem();
+                Player player = (Player) jaxbUnmarshaller.unmarshal(item.getNode());
+                //player.setTeam(t);
+                players.add(player);
+
+            }
+
+        }catch (Exception e){
+            log.log(Level.SEVERE,e.getMessage());
+        }
+        finally {close();}
+        return players;
+    }
+
+
 
     private void close() {
         try {
@@ -92,14 +146,32 @@ public class XQueryHelper {
         //hello
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws JAXBException {
+
+
+        String[] teamsId = {"69591", "69592", "69590", "69594", "69597","69593", "69596","69600","69894","69599","69598", "69705", "69604" };
+        //String teamsId = {""};
+        ArrayList<Player> players = new ArrayList<Player>();
         try {
-            System.out.print("hola");
-            XQueryHelper xQueryHelper = new XQueryHelper(albumsXQ, new URL(apiURL));
-            System.out.print("hola1");
-            ArrayList<Song> songs = xQueryHelper.getSongs();
-            for (Song song : songs)
-                System.out.println(song);
+
+                for(int i=0; i<teamsId.length;i++) {
+                    XQueryHelper xQueryHelperPlayers = new XQueryHelper(playerXQ, new URL(apiTeamBase+teamsId[i]));
+                    players.addAll(xQueryHelperPlayers.getPlayers());
+                    //players = xQueryHelperPlayers.getPlayers();
+                }
+
+            for (Player player : players){
+                System.out.println(player);
+            }
+
+                XQueryHelper xQueryHelperTeam = new XQueryHelper(teamsXQ, new URL(apiURL));
+
+                ArrayList<Team> teams = xQueryHelperTeam.getTeams();
+                for (Team team : teams) {
+                 System.out.println(team);
+                 }
+
+
         } catch (Exception e){
             e.printStackTrace();
         }
